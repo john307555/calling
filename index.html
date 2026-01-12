@@ -48,6 +48,10 @@
     transform: scale(1.05);
   }
 
+  .off {
+    background: #aa2222 !important;
+  }
+
   .dropdown-content {
     position: absolute;
     background: #222;
@@ -121,7 +125,7 @@
 <div id="controls">
   <button id="muteBtn">Mute</button>
   <div style="position: relative;">
-    <button class="dropdown-btn" id="camBtn">Camera ▼</button>
+    <button class="dropdown-btn" id="camBtn">Cam ▼</button>
     <div class="dropdown-content" id="camDropdown"></div>
   </div>
   <div style="position: relative;">
@@ -221,6 +225,8 @@
     localStream.removeTrack(currentVideoTrack);
     localStream.addTrack(newStream.getVideoTracks()[0]);
     currentVideoTrack = newStream.getVideoTracks()[0];
+    if(camOff) currentVideoTrack.enabled = false;
+    updateButtonColors();
   }
 
   async function switchMic(id){
@@ -228,33 +234,44 @@
     localStream.removeTrack(currentAudioTrack);
     localStream.addTrack(newStream.getAudioTracks()[0]);
     currentAudioTrack = newStream.getAudioTracks()[0];
+    if(muted) currentAudioTrack.enabled = false;
+    updateButtonColors();
+  }
+
+  function updateButtonColors(){
+    muteBtn.classList.toggle('off', muted);
+    camBtn.classList.toggle('off', camOff);
   }
 
   muteBtn.onclick = () => {
     muted = !muted;
     currentAudioTrack.enabled = !muted;
-    muteBtn.textContent = muted ? 'Unmute' : 'Mute';
-  }
-
-  // Dropdown logic: only 1 open at a time
-  function closeDropdowns() {
-    camDropdown.style.display = 'none';
-    micDropdown.style.display = 'none';
+    updateButtonColors();
   }
 
   camBtn.onclick = (e) => {
     e.stopPropagation();
-    micDropdown.style.display = 'none';
     camDropdown.style.display = camDropdown.style.display === 'flex' ? 'none' : 'flex';
+    micDropdown.style.display = 'none';
   }
 
   micBtn.onclick = (e) => {
     e.stopPropagation();
-    camDropdown.style.display = 'none';
     micDropdown.style.display = micDropdown.style.display === 'flex' ? 'none' : 'flex';
+    camDropdown.style.display = 'none';
   }
 
-  document.addEventListener('click', () => closeDropdowns());
+  document.addEventListener('click', () => {
+    camDropdown.style.display = 'none';
+    micDropdown.style.display = 'none';
+  })
+
+  // toggle cam on/off when you click inside dropdown area (first button)
+  camDropdown.addEventListener('click', (e)=>{
+    camOff = !camOff;
+    if(currentVideoTrack) currentVideoTrack.enabled = !camOff;
+    updateButtonColors();
+  });
 
   shareBtn.onclick = async () => {
     try{
