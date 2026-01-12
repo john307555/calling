@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>QuickCall Real</title>
+<style>
+body {
+  margin:0;
+  font-family:-apple-system,sans-serif;
+  background:#f2f2f7;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:flex-start;
+  height:100vh;
+  padding-top:20px;
+}
+input, button { padding:10px; margin:5px; border-radius:12px; border:1px solid #ccc; }
+button { background:#007aff; color:white; border:none; cursor:pointer; font-weight:bold; }
+.video-grid {
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap:10px;
+  margin-top:20px;
+  width:90%;
+}
+.user-video {
+  position:relative;
+  border-radius:16px;
+  overflow:hidden;
+  background:#000;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+}
+.user-video video { width:100%; height:100%; object-fit:cover; }
+.name-tag {
+  position:absolute;
+  bottom:5px;
+  left:5px;
+  background:rgba(0,0,0,0.5);
+  color:white;
+  padding:2px 6px;
+  border-radius:8px;
+  font-size:12px;
+  max-width:90%;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.pfp {
+  position:absolute;
+  top:5px;
+  left:5px;
+  width:30px;
+  height:30px;
+  border-radius:50%;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  color:white;
+  font-weight:bold;
+  font-size:16px;
+}
+.talking { box-shadow:0 0 15px red; border:3px solid red; }
+</style>
+</head>
+<body>
+
+<h2>Enter Your Name</h2>
+<input id="username" placeholder="Your name (max 20)" maxlength="20">
+<button id="join">Join Call</button>
+
+<div class="video-grid" id="videoGrid"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js"></script>
+<script>
+const videoGrid = document.getElementById('videoGrid');
+const joinBtn = document.getElementById('join');
+let localStream;
+let peers = {};
+let peer, myId;
+
+// assign each user a slightly different gradient
+function randomGradient(seed){
+    const base = 150 + (seed*10)%100; 
+    const color1 = `hsl(${base%360}, 70%, 50%)`;
+    const color2 = `hsl(${(base+30)%360}, 70%, 60%)`;
+    return `linear-gradient(135deg, ${color1}, ${color2})`;
+}
+
+async function startLocalStream(){
+    localStream = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+    addVideo(localStream, document.getElementById('username').value + ' (You)', true, 0);
+}
+
+// add a video box
+function addVideo(stream, name, isLocal=false, idSeed=null){
+    const div = document.createElement('div');
+    div.classList.add('user-video');
+    if(isLocal) div.classList.add('local');
+    div.style.background = randomGradient(idSeed??Math.floor(Math.random()*100));
+
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.autoplay = true;
+    video.playsInline = true;
+
+    const pfp = document.createElement('div');
+    pfp.classList.add('pfp');
+    pfp.textContent = name.charAt(0).toUpperCase();
+
+    const nameTag = document.createElement('div');
+    nameTag.classList.add('name-tag');
+    nameTag.textContent = name;
+
+    div.appendChild(video);
+    div.appendChild(pfp);
+    div.appendChild(nameTag);
+    videoGrid.appendChild(div);
+
+    // detect speaking and glow red
+    const audioCtx = new AudioContext();
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    source.connect(analyser);
+    analyser.fftSize = 512;
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    function checkVolume(){
+        analyser.getByteFrequencyData(dataArray);
+        let volume = dataArray.reduce((a,b)=>a+b,0)/dataArray.length;
+        if(volume>20) div.classList.add('talking');
+        else div.classList.remove('talking');
+        requestAnimationFrame(checkVolume);
+    }
+    checkVolume();
+}
+
+joinBtn.onclick = async ()=>{
+    const username = document.getElementById('username').value.substring(0,20);
+    if(!username) return alert('Enter a name!');
+    joinBtn.disabled = true;
+    await startLocalStream();
+
+    peer = new Peer(undefined, {host:'0.peerjs.com', port:443, secure:true});
+    peer.on('open', id=>{
+        myId = id;
+        // call everyone in one default room (ids are tracked in PeerJS)
+        broadcastJoin(username);
+    });
+
+    function broadcastJoin(username){
+        // try connecting to a range of peer ids to simulate one global room
+        for(let i=0;i<50;i++){
+            const targetId = 'USER'+i;
+            if(targetId===myId) continue;
+            if(peers[targetId]) continue;
+            const call = peer.call(targetId, localStream);
+            call.on('stream', remoteStream => addVideo(remoteStream,'User',false, i));
+            peers[targetId] = call;
+        }
+    }
+
+    peer.on('call', call=>{
+        call.answer(localStream);
+        call.on('stream', remoteStream => addVideo(remoteStream,'User',false, Math.floor(Math.random()*100)));
+    });
+};
+</script>
+</body>
+</html>
