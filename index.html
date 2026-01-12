@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Advanced Dark Video Call UI</title>
+<title>Advanced Video Call UI</title>
 <style>
   body {
     margin: 0;
@@ -13,56 +13,79 @@
     color: #fff;
   }
 
-  /* CONTROLS */
   #controls {
     position: fixed;
     bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 15px;
+    gap: 10px;
     background: rgba(30,30,30,0.8);
-    padding: 12px 25px;
+    padding: 12px 20px;
     border-radius: 30px;
     backdrop-filter: blur(8px);
     box-shadow: 0 0 15px rgba(0,0,0,0.5);
     z-index: 1000;
-    transition: transform 0.2s;
   }
 
-  #controls:hover {
-    transform: translateX(-50%) scale(1.05);
-  }
-
-  button, select {
+  button, .dropdown-btn {
     background: #222;
     color: #fff;
     border: none;
-    padding: 10px 18px;
+    padding: 10px 15px;
     border-radius: 20px;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
     transition: all 0.2s ease;
   }
 
-  button:hover, select:hover {
+  button:hover, .dropdown-btn:hover {
     background: #555;
     transform: scale(1.05);
   }
 
-  /* VIDEO BOX */
+  .dropdown-content {
+    position: absolute;
+    background: #222;
+    display: none;
+    flex-direction: column;
+    top: -100px;
+    border-radius: 12px;
+    padding: 5px 0;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.6);
+    animation: fadeIn 0.2s ease;
+  }
+
+  .dropdown-content button {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 0;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px);}
+    to { opacity: 1; transform: translateY(0);}
+  }
+
   .video-box {
     position: absolute;
-    border-radius: 20px;
+    border-radius: 15px;
     overflow: hidden;
     cursor: grab;
     resize: both;
-    min-width: 150px;
-    min-height: 120px;
+    min-width: 120px;
+    min-height: 90px;
+    width: 220px;
+    height: 160px;
     box-shadow: 0 8px 20px rgba(0,0,0,0.6);
-    transition: transform 0.3s, box-shadow 0.3s;
     border: 2px solid #333;
-    animation: popin 0.5s ease;
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
     background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
   }
 
   .video-box:hover {
@@ -70,17 +93,21 @@
     box-shadow: 0 12px 25px rgba(0,0,0,0.8);
   }
 
+  .speaking {
+    border-color: #0f0;
+    box-shadow: 0 0 20px #0f0;
+  }
+
   video {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    display: block;
-    border-radius: 20px;
   }
 
-  @keyframes popin {
-    0% { transform: scale(0.5); opacity: 0; }
-    100% { transform: scale(1); opacity: 1; }
+  #videoContainer {
+    width: 100%;
+    height: 100%;
+    position: relative;
   }
 </style>
 </head>
@@ -88,9 +115,15 @@
 
 <div id="controls">
   <button id="muteBtn">Mute</button>
-  <button id="camBtn">Camera Off</button>
-  <select id="micSelect"></select>
-  <select id="camSelect"></select>
+  <div style="position: relative;">
+    <button class="dropdown-btn" id="camBtn">Camera ▼</button>
+    <div class="dropdown-content" id="camDropdown"></div>
+  </div>
+  <div style="position: relative;">
+    <button class="dropdown-btn" id="micBtn">Mic ▼</button>
+    <div class="dropdown-content" id="micDropdown"></div>
+  </div>
+  <button id="shareBtn">Screen Share</button>
 </div>
 
 <div id="videoContainer"></div>
@@ -99,123 +132,152 @@
   const videoContainer = document.getElementById('videoContainer');
   const muteBtn = document.getElementById('muteBtn');
   const camBtn = document.getElementById('camBtn');
-  const micSelect = document.getElementById('micSelect');
-  const camSelect = document.getElementById('camSelect');
+  const micBtn = document.getElementById('micBtn');
+  const camDropdown = document.getElementById('camDropdown');
+  const micDropdown = document.getElementById('micDropdown');
+  const shareBtn = document.getElementById('shareBtn');
 
   let localStream;
   let muted = false;
+  let speaking = false;
   let camOff = false;
+  let currentVideoTrack;
+  let currentAudioTrack;
 
   async function init() {
     const devices = await navigator.mediaDevices.enumerateDevices();
 
     devices.forEach(device => {
-      if(device.kind === 'audioinput') {
-        const option = document.createElement('option');
-        option.value = device.deviceId;
-        option.text = device.label || `Mic ${micSelect.length+1}`;
-        micSelect.appendChild(option);
-      }
       if(device.kind === 'videoinput') {
-        const option = document.createElement('option');
-        option.value = device.deviceId;
-        option.text = device.label || `Camera ${camSelect.length+1}`;
-        camSelect.appendChild(option);
+        const btn = document.createElement('button');
+        btn.textContent = device.label || `Camera ${camDropdown.children.length+1}`;
+        btn.onclick = () => switchCamera(device.deviceId);
+        camDropdown.appendChild(btn);
+      }
+      if(device.kind === 'audioinput') {
+        const btn = document.createElement('button');
+        btn.textContent = device.label || `Mic ${micDropdown.children.length+1}`;
+        btn.onclick = () => switchMic(device.deviceId);
+        micDropdown.appendChild(btn);
       }
     });
 
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    localStream = stream;
-    addVideoBox(stream, true);
+    await startStream();
   }
 
-  function addVideoBox(stream, isLocal=false) {
+  async function startStream(camId, micId) {
+    if(localStream){
+      localStream.getTracks().forEach(t => t.stop());
+    }
+    localStream = await navigator.mediaDevices.getUserMedia({
+      video: camId ? {deviceId: camId} : true,
+      audio: micId ? {deviceId: micId} : true
+    });
+
+    currentVideoTrack = localStream.getVideoTracks()[0];
+    currentAudioTrack = localStream.getAudioTracks()[0];
+
     const box = document.createElement('div');
     box.className = 'video-box';
-    box.style.top = `${50 + Math.random() * 200}px`;
-    box.style.left = `${50 + Math.random() * 300}px`;
-
+    box.style.top = '50px';
+    box.style.left = '50px';
     const video = document.createElement('video');
-    video.srcObject = stream;
+    video.srcObject = localStream;
     video.autoplay = true;
-    video.muted = isLocal; 
+    video.muted = true;
     box.appendChild(video);
     videoContainer.appendChild(box);
-
     dragElement(box);
+    animateSpeaking(box);
   }
 
-  function dragElement(elmnt) {
-    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-    elmnt.onmousedown = dragMouseDown;
+  function animateSpeaking(box) {
+    const audioContext = new AudioContext();
+    const analyser = audioContext.createAnalyser();
+    const source = audioContext.createMediaStreamSource(localStream);
+    source.connect(analyser);
+    analyser.fftSize = 512;
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-    function dragMouseDown(e) {
-      e.preventDefault();
-      elmnt.style.cursor = "grabbing";
-      pos3 = e.clientX;
-      pos4 = e.clientY;
-      document.onmouseup = closeDragElement;
-      document.onmousemove = elementDrag;
-    }
-
-    function elementDrag(e) {
-      e.preventDefault();
-      pos1 = pos3 - e.clientX;
-      pos2 = pos4 - e.clientY;
-      pos3 = e.clientX;
-      pos4 = e.clientY;
-      const newTop = elmnt.offsetTop - pos2;
-      const newLeft = elmnt.offsetLeft - pos1;
-
-      // collision detection
-      const boxes = document.querySelectorAll('.video-box');
-      let colliding = false;
-      boxes.forEach(b => {
-        if(b !== elmnt) {
-          const rect1 = {x:newLeft,y:newTop,w:elmnt.offsetWidth,h:elmnt.offsetHeight};
-          const rect2 = {x:b.offsetLeft,y:b.offsetTop,w:b.offsetWidth,h:b.offsetHeight};
-          if(rect1.x < rect2.x + rect2.w &&
-             rect1.x + rect1.w > rect2.x &&
-             rect1.y < rect2.y + rect2.h &&
-             rect1.h + rect1.y > rect2.y) colliding = true;
-        }
-      });
-
-      if(!colliding) {
-        elmnt.style.top = newTop + "px";
-        elmnt.style.left = newLeft + "px";
+    function check() {
+      analyser.getByteFrequencyData(dataArray);
+      const avg = dataArray.reduce((a,b)=>a+b,0)/dataArray.length;
+      if(avg > 10){
+        box.classList.add('speaking');
+      } else {
+        box.classList.remove('speaking');
       }
+      requestAnimationFrame(check);
     }
+    check();
+  }
 
-    function closeDragElement() {
-      elmnt.style.cursor = "grab";
-      document.onmouseup = null;
-      document.onmousemove = null;
-    }
+  async function switchCamera(id){
+    const newStream = await navigator.mediaDevices.getUserMedia({ video: {deviceId: id}, audio: muted ? false : true });
+    localStream.removeTrack(currentVideoTrack);
+    localStream.addTrack(newStream.getVideoTracks()[0]);
+    currentVideoTrack = newStream.getVideoTracks()[0];
+  }
+
+  async function switchMic(id){
+    const newStream = await navigator.mediaDevices.getUserMedia({ audio: {deviceId: id}, video: camOff ? false : true });
+    localStream.removeTrack(currentAudioTrack);
+    localStream.addTrack(newStream.getAudioTracks()[0]);
+    currentAudioTrack = newStream.getAudioTracks()[0];
   }
 
   muteBtn.onclick = () => {
     muted = !muted;
-    localStream.getAudioTracks()[0].enabled = !muted;
-    muteBtn.innerText = muted ? 'Unmute' : 'Mute';
+    currentAudioTrack.enabled = !muted;
+    muteBtn.textContent = muted ? 'Unmute' : 'Mute';
   }
 
-  camBtn.onclick = () => {
-    camOff = !camOff;
-    localStream.getVideoTracks()[0].enabled = !camOff;
-    camBtn.innerText = camOff ? 'Camera On' : 'Camera Off';
+  camBtn.onclick = () => camDropdown.style.display = camDropdown.style.display === 'flex' ? 'none' : 'flex';
+  micBtn.onclick = () => micDropdown.style.display = micDropdown.style.display === 'flex' ? 'none' : 'flex';
+  
+  shareBtn.onclick = async () => {
+    try{
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({video:true});
+      const box = document.createElement('div');
+      box.className = 'video-box';
+      box.style.top = '200px';
+      box.style.left = '200px';
+      const video = document.createElement('video');
+      video.srcObject = screenStream;
+      video.autoplay = true;
+      box.appendChild(video);
+      videoContainer.appendChild(box);
+      dragElement(box);
+    } catch(e){
+      console.log('Screen share canceled');
+    }
   }
 
-  micSelect.onchange = async () => {
-    const newStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: micSelect.value }, video: camOff ? false : true });
-    localStream.removeTrack(localStream.getAudioTracks()[0]);
-    localStream.addTrack(newStream.getAudioTracks()[0]);
-  }
-
-  camSelect.onchange = async () => {
-    const newStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: camSelect.value }, audio: muted ? false : true });
-    localStream.removeTrack(localStream.getVideoTracks()[0]);
-    localStream.addTrack(newStream.getVideoTracks()[0]);
+  function dragElement(elmnt){
+    let pos1 = 0,pos2 = 0,pos3 = 0,pos4 = 0;
+    elmnt.onmousedown = dragMouseDown;
+    function dragMouseDown(e){
+      e.preventDefault();
+      elmnt.style.cursor = "grabbing";
+      pos3 = e.clientX; pos4 = e.clientY;
+      document.onmouseup = closeDragElement;
+      document.onmousemove = elementDrag;
+    }
+    function elementDrag(e){
+      e.preventDefault();
+      pos1 = pos3 - e.clientX;
+      pos2 = pos4 - e.clientY;
+      pos3 = e.clientX; pos4 = e.clientY;
+      let newTop = elmnt.offsetTop - pos2;
+      let newLeft = elmnt.offsetLeft - pos1;
+      elmnt.style.top = newTop + "px";
+      elmnt.style.left = newLeft + "px";
+    }
+    function closeDragElement(){
+      elmnt.style.cursor = "grab";
+      document.onmouseup = null;
+      document.onmousemove = null;
+    }
   }
 
   init();
